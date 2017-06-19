@@ -85,7 +85,9 @@ def massage(data):
 
 
 def copyCustomer(customer):
-    return Customer(customer.id, customer.data.copy())
+    c = Customer(customer.id, customer.data.copy())
+    c.createEval()
+    return c
 
 
 ''' Classes '''
@@ -325,6 +327,58 @@ class CustomerSlice:
                 df['class'][idx] = "pattern unclear"
         return df
 
+    def createAggregateFrame(self):
+        count = 1
+        aggFrame = self.listSufficient[0].non_eval
+        while (count < len(self.listSufficient)):
+            aggFrame = aggFrame.append(self.listSufficient[count].non_eval)
+            count = count + 1
+        self.aggFrame = aggFrame.sort_values(by='invoicetodt').reset_index().drop('index', 1)
+
+    def createTestFrame(self, algorithms):
+        count = 1
+        testFrame = self.listSufficient[0].eval
+        while (count < len(self.listSufficient)):
+            testFrame = testFrame.append(self.listSufficient[count].eval)
+            count = count + 1
+        self.testFrame = testFrame.reset_index()
+        for idx in algorithms.index:
+            self.testFrame['predicted_kwh_' + str(algorithms['name'][idx])] = None
+
+    def create_aggregate_ErrorFrame(self, algorithms):
+        columns = ['regression approach', 'RMSQE', 'AE', 'MAE']
+        self.agg_errorFrame = pd.DataFrame(columns=columns)
+        for idx in algorithms.index:
+            self.agg_errorFrame.loc[idx] = ['predicted_kwh_' + str(algorithms['name'][idx]), 0, 0, 0]
+
+    def createTrainSets(self, train_columns, target_column):
+        train_X = self.aggFrame.as_matrix(columns=train_columns)
+        train_y = self.aggFrame.as_matrix(columns=[target_column])
+        return train_X, train_y
+
+    def createTestSets(self, train_columns, target_column):
+        test_X = self.testFrame.as_matrix(columns=train_columns)
+        test_y = self.testFrame.as_matrix(columns=[target_column])
+        return test_X, test_y
+
+    def run_aggregate_models(self, train_columns, target_column, algorithms):
+        self.createAggregateFrame()
+        self.createTestFrame(algorithms)
+        self.create_aggregate_ErrorFrame(algorithms)
+
+        train_X, train_y = self.createTrainSets(train_columns, target_column)
+        target_X, target_y = self.createTestSets(train_columns, target_column)
+
+        algorithms['fitted_model'] = algorithms['algorithm']
+        # TODO: Vectorize
+        for idx in algorithms.index:
+            current_algo =  algorithms['algorithm'][idx]
+            algorithms['fitted_model'][idx] = current_algo.fit(train_X, train_y)
+            for cust_idx in self.testFrame.index:
+                self.testFrame['predicted_kwh_' + str(algorithms['name'][idx])][cust_idx] = int(current_algo.predict(target_X[cust_idx]))
+                self.agg_errorFrame.loc[[idx], 'AE'] += int(abs(target_y[cust_idx] - int(current_algo.predict(target_X[cust_idx]))))
+            self.agg_errorFrame.loc[[idx], 'MAE'] = self.agg_errorFrame['AE'][idx] / len(self.testFrame)
+
 
 class Customer:
     def __init__(self, id, data):
@@ -367,6 +421,14 @@ class Customer:
 
         # add to data which contains customer ID for each instance
         self.data['iethicalid'] = self.id
+        self.createEval()
+
+    def createEval(self):
+        # Separate last row from rest of data - this will be used for prediction evaluation
+        self.eval = self.data[len(self.data) - 1:]
+        self.non_eval = self.data[0: len(self.data) - 1]
+
+
 
     def displayTempVsUsagePlots(self):
         plt.figure(figsize=(10, 4))
