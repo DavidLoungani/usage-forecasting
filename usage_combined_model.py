@@ -90,6 +90,24 @@ def copyCustomer(customer):
     return c
 
 
+# TODO: Not sure if this actually works!!! Is there a better way to do this?
+def createFactors(a, b):
+    final = (a[a.columns[0]] * b[b.columns[0]]).as_matrix()
+    final = final.reshape(len(final), 1)
+    i = 0
+    j = 1
+    while i < len(a.columns):
+        while j < len(b.columns):
+            temp = (a[a.columns[i]] * b[b.columns[j]])
+            temp = temp.reshape(len(temp), 1)
+            final = np.hstack((final, temp))
+            j += 1
+        j = 0
+        i += 1
+    return final
+
+
+
 ''' Classes '''
 
 
@@ -341,6 +359,7 @@ class CustomerSlice:
         while (count < len(self.listSufficient)):
             testFrame = testFrame.append(self.listSufficient[count].eval)
             count = count + 1
+        self.allFrame = pd.concat([self.aggFrame, testFrame])
         self.testFrame = testFrame.reset_index()
         for idx in algorithms.index:
             self.testFrame['predicted_kwh_' + str(algorithms['name'][idx])] = None
@@ -351,33 +370,69 @@ class CustomerSlice:
         for idx in algorithms.index:
             self.agg_errorFrame.loc[idx] = ['predicted_kwh_' + str(algorithms['name'][idx]), 0, 0, 0]
 
-    def createTrainSets(self, train_columns, categorical_columns, target_column):
+    def createTrainSets(self, train_columns, categorical_columns, interaction_columns, target_column):
         train_X = self.aggFrame.as_matrix(columns=train_columns)
-        # TODO: Vectorize
+        # TODO: Vectorize and Abstract? Right now categorical/interactions are a mess...
         for column in categorical_columns:
             cat_col = pd.Categorical(self.aggFrame[column])
             mx_dummies = pd.get_dummies(cat_col)
             train_X = np.hstack((train_X, mx_dummies))
+        # TODO: The interaction variable creation here is disgustingly messy
+        for entry in interaction_columns:
+            if (entry[2]=='categorical'):
+                cat_col = pd.Categorical(self.aggFrame[entry[0]])
+                mx_dummies = pd.get_dummies(cat_col)
+                a = mx_dummies
+            else:
+                mx = self.aggFrame.as_matrix(columns=[entry[0]])
+                a = pd.DataFrame(mx, columns=['numerical'])
+            if (entry[3]=='categorical'):
+                cat_col = pd.Categorical(self.aggFrame[entry[1]])
+                mx_dummies = pd.get_dummies(cat_col)
+                b = mx_dummies
+            else:
+                mx = self.aggFrame.as_matrix(columns=[entry[1]])
+                b = pd.DataFrame(mx, columns=['numerical'])
+            interaction_data = createFactors(a, b)
+            train_X = np.hstack((train_X, interaction_data))
         train_y = self.aggFrame.as_matrix(columns=[target_column])
         return train_X, train_y
 
-    def createTestSets(self, train_columns, categorical_columns, target_column):
+    def createTestSets(self, train_columns, categorical_columns, interaction_columns, target_column):
         test_X = self.testFrame.as_matrix(columns=train_columns)
         # TODO: Vectorize
         for column in categorical_columns:
             cat_col = pd.Categorical(self.testFrame[column])
             mx_dummies = pd.get_dummies(cat_col)
             test_X = np.hstack((test_X, mx_dummies))
+        # TODO: The interaction variable creation here is disgustingly messy
+        for entry in interaction_columns:
+            if (entry[2] == 'categorical'):
+                cat_col = pd.Categorical(self.testFrame[entry[0]])
+                mx_dummies = pd.get_dummies(cat_col)
+                a = mx_dummies
+            else:
+                mx = self.testFrame.as_matrix(columns=[entry[0]])
+                a = pd.DataFrame(mx, columns=['numerical'])
+            if (entry[3] == 'categorical'):
+                cat_col = pd.Categorical(self.testFrame[entry[1]])
+                mx_dummies = pd.get_dummies(cat_col)
+                b = mx_dummies
+            else:
+                mx = self.testFrame.as_matrix(columns=[entry[1]])
+                b = pd.DataFrame(mx, columns=['numerical'])
+            interaction_data = createFactors(a, b)
+            test_X = np.hstack((test_X, interaction_data))
         test_y = self.testFrame.as_matrix(columns=[target_column])
         return test_X, test_y
 
-    def run_aggregate_models(self, train_columns, categorical_columns, target_column, algorithms):
+    def run_aggregate_models(self, train_columns, categorical_columns, interaction_columns, target_column, algorithms):
         self.createAggregateFrame()
         self.createTestFrame(algorithms)
         self.create_aggregate_ErrorFrame(algorithms)
 
-        train_X, train_y = self.createTrainSets(train_columns, categorical_columns, target_column)
-        target_X, target_y = self.createTestSets(train_columns, categorical_columns, target_column)
+        train_X, train_y = self.createTrainSets(train_columns, categorical_columns, interaction_columns, target_column)
+        target_X, target_y = self.createTestSets(train_columns, categorical_columns, interaction_columns, target_column)
 
         algorithms['fitted_model'] = algorithms['algorithm']
         # TODO: Vectorize
@@ -509,7 +564,12 @@ class Customer:
         for date_idx in self.init_oos_dates.index:
             self.forecastOn(date_idx, train_columns, categorical_columns, target_column, algorithms)
         for idx in algorithms.index:
-            self.errorFrame.loc[[idx], 'MAE'] = self.errorFrame['AE'][idx] / len(self.init_oos_dates)
+            try:
+                self.errorFrame.loc[[idx], 'MAE'] = self.errorFrame['AE'][idx] / len(self.init_oos_dates)
+            except ZeroDivisionError:
+                print('self.init_oos_dates: ')
+                print(self.init_oos_dates)
+                raise ValueError("ZeroDivisionError caught while running " + algorithms['name'][idx] + 'on customer: ' + str(self.id))
         self.errorFrame = self.errorFrame.sort_values(by='AE')
         self.errorFrame = self.errorFrame.reset_index(drop=True)
 
@@ -593,6 +653,7 @@ class TempComparisonTest:
         my_algorithms_table['algorithm'] = [RandomForestRegressor(n_estimators=150, min_samples_split=2)]
         my_train_columns = ['tavg_intervalSum', 'prev_pd_kwh', 'prev_prev_pd_kwh', 'days_passed']
         my_categorical_columns = ['month']
+        my_interaction_columns = [('month', 'iethicalid', 'categorical', 'categorical')]
 
         self.cust_slice.runModels(my_train_columns, my_categorical_columns, 'kwh', my_algorithms_table)
 
