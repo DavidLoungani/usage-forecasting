@@ -256,13 +256,13 @@ class CustomerSlice:
             self.grand_errorFrame.loc[[idx], 'AE'] = 0
             self.grand_errorFrame.loc[[idx], 'MAE'] = 0
 
-    def runModels(self, train_columns, target_column, algorithms):
+    def runModels(self, train_columns, categorical_columns, target_column, algorithms):
         num_customers = len(self.listSufficient)
         count = 0
         self.reset_grand_errorFrame(algorithms)
         # TODO: VECTORIZE THE FOR LOOPS ?
         for customer in self.listSufficient:
-            customer.runModels(train_columns, target_column, algorithms)
+            customer.runModels(train_columns, categorical_columns, target_column, algorithms)
             for idx in algorithms.index:
                 self.grand_errorFrame.loc[[idx], 'AE'] += \
                     int(customer.errorFrame[customer.errorFrame['regression approach']
@@ -351,23 +351,33 @@ class CustomerSlice:
         for idx in algorithms.index:
             self.agg_errorFrame.loc[idx] = ['predicted_kwh_' + str(algorithms['name'][idx]), 0, 0, 0]
 
-    def createTrainSets(self, train_columns, target_column):
+    def createTrainSets(self, train_columns, categorical_columns, target_column):
         train_X = self.aggFrame.as_matrix(columns=train_columns)
+        # TODO: Vectorize
+        for column in categorical_columns:
+            cat_col = pd.Categorical(self.aggFrame[column])
+            mx_dummies = pd.get_dummies(cat_col)
+            train_X = np.hstack((train_X, mx_dummies))
         train_y = self.aggFrame.as_matrix(columns=[target_column])
         return train_X, train_y
 
-    def createTestSets(self, train_columns, target_column):
+    def createTestSets(self, train_columns, categorical_columns, target_column):
         test_X = self.testFrame.as_matrix(columns=train_columns)
+        # TODO: Vectorize
+        for column in categorical_columns:
+            cat_col = pd.Categorical(self.testFrame[column])
+            mx_dummies = pd.get_dummies(cat_col)
+            test_X = np.hstack((test_X, mx_dummies))
         test_y = self.testFrame.as_matrix(columns=[target_column])
         return test_X, test_y
 
-    def run_aggregate_models(self, train_columns, target_column, algorithms):
+    def run_aggregate_models(self, train_columns, categorical_columns, target_column, algorithms):
         self.createAggregateFrame()
         self.createTestFrame(algorithms)
         self.create_aggregate_ErrorFrame(algorithms)
 
-        train_X, train_y = self.createTrainSets(train_columns, target_column)
-        target_X, target_y = self.createTestSets(train_columns, target_column)
+        train_X, train_y = self.createTrainSets(train_columns, categorical_columns, target_column)
+        target_X, target_y = self.createTestSets(train_columns, categorical_columns, target_column)
 
         algorithms['fitted_model'] = algorithms['algorithm']
         # TODO: Vectorize
@@ -443,15 +453,25 @@ class Customer:
         plt.title('Temperature and kWH values over time')
         plt.show()
 
-    def getTrainingSet(self, init_trainsize, date_idx, train_columns, target_column):
+    def getTrainingSet(self, init_trainsize, date_idx, train_columns, categorical_columns, target_column):
         X = self.data.as_matrix(columns=train_columns)
+        # TODO: Vectorize
+        for column in categorical_columns:
+            cat_col = pd.Categorical(self.data[column])
+            mx_dummies = pd.get_dummies(cat_col)
+            X = np.hstack((X, mx_dummies))
         y = self.data.as_matrix(columns=[target_column])
         train_X = X[: init_trainsize + date_idx]
         train_y = y[0: init_trainsize + date_idx]
         return train_X, train_y
 
-    def getTestSet(self, init_trainsize, date_idx, train_columns):
+    def getTestSet(self, init_trainsize, date_idx, train_columns, categorical_columns):
         X = self.data.as_matrix(columns=train_columns)
+        # TODO: Vectorize
+        for column in categorical_columns:
+            cat_col = pd.Categorical(self.data[column])
+            mx_dummies = pd.get_dummies(cat_col)
+            X = np.hstack((X, mx_dummies))
         oos_X = X[init_trainsize+date_idx]
         return oos_X
 
@@ -468,9 +488,9 @@ class Customer:
             self.data['predicted_kwh_' + str(algorithms['name'][idx])] = None
             self.errorFrame.loc[idx] = ['predicted_kwh_' + str(algorithms['name'][idx]), 0, 0, 0]
 
-    def forecastOn(self, date_idx, train_columns, target_column, algorithms):
-        train_X, train_y = self.getTrainingSet(self.init_trainsize, date_idx, train_columns, target_column)
-        target_X = self.getTestSet(self.init_trainsize, date_idx, train_columns)
+    def forecastOn(self, date_idx, train_columns, categorical_columns, target_column, algorithms):
+        train_X, train_y = self.getTrainingSet(self.init_trainsize, date_idx, train_columns, categorical_columns, target_column)
+        target_X = self.getTestSet(self.init_trainsize, date_idx, train_columns, categorical_columns)
         target_y = self.data['kwh'][self.init_trainsize + date_idx]
 
 
@@ -483,11 +503,11 @@ class Customer:
             error = int(abs(target_y - predicted_y))
             self.errorFrame.loc[[idx], 'AE'] += error
 
-    def runModels(self, train_columns, target_column, algorithms):
+    def runModels(self, train_columns, categorical_columns, target_column, algorithms):
         self.setInitialVals(algorithms)
         # TODO: Vectorize!
         for date_idx in self.init_oos_dates.index:
-            self.forecastOn(date_idx, train_columns, target_column, algorithms)
+            self.forecastOn(date_idx, train_columns, categorical_columns, target_column, algorithms)
         for idx in algorithms.index:
             self.errorFrame.loc[[idx], 'MAE'] = self.errorFrame['AE'][idx] / len(self.init_oos_dates)
         self.errorFrame = self.errorFrame.sort_values(by='AE')
@@ -567,15 +587,17 @@ class TempComparisonTest:
         self.cust_database = queryDatabase()
         self.cust_slice = self.cust_database.selectRandomHardSlice(cust_count)
         self.cust_slice_minus_temp = self.cust_slice.copy()
+
         my_algorithms_table = pd.DataFrame(columns=['name', 'algorithm'])
         my_algorithms_table['name'] = ['rf']
         my_algorithms_table['algorithm'] = [RandomForestRegressor(n_estimators=150, min_samples_split=2)]
+        my_train_columns = ['tavg_intervalSum', 'prev_pd_kwh', 'prev_prev_pd_kwh', 'days_passed']
+        my_categorical_columns = ['month']
 
-        my_train_columns = ['tavg_intervalSum', 'prev_pd_kwh', 'prev_prev_pd_kwh', 'month', 'days_passed']
-        self.cust_slice.runModels(my_train_columns, 'kwh', my_algorithms_table)
+        self.cust_slice.runModels(my_train_columns, my_categorical_columns, 'kwh', my_algorithms_table)
 
-        my_train_columns_minus_temp = ['prev_pd_kwh', 'prev_prev_pd_kwh', 'month', 'days_passed']
-        self.cust_slice_minus_temp.runModels(my_train_columns_minus_temp, 'kwh', my_algorithms_table)
+        my_train_columns_minus_temp = ['prev_pd_kwh', 'prev_prev_pd_kwh', 'days_passed']
+        self.cust_slice_minus_temp.runModels(my_train_columns_minus_temp, my_categorical_columns, 'kwh', my_algorithms_table)
 
     def error_frames(self):
         print('RF MAE with Temp: ' + str(self.cust_slice.grand_errorFrame['MAE'][0]))
