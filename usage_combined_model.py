@@ -473,6 +473,13 @@ class Customer:
             print("in formatting data, could not add temporal information to customer ID: " + str(self.id))
             raise ValueError("Temporal information formatting exception")
 
+        # add avg_kwh_for_current_month column
+        self.data['avg_kwh_for_cust_for_current_month'] = self.data['avg_kwh'] # need to initialize with something
+        for idx in self.data.index:
+            m = (self.data['month'][idx])
+            self.data['avg_kwh_for_cust_for_current_month'][idx] = self.data[self.data['month'] == m]['kwh'].sum() \
+                                                                   / len(self.data[self.data['month'] == m]['kwh'])
+
         try:
             # add one-period time lag
             self.data['prev_pd_kwh'] = list(map(lambda idx: self.data['kwh'][max(idx - 1, 0)], self.data.index))
@@ -562,7 +569,12 @@ class Customer:
         self.setInitialVals(algorithms)
         # TODO: Vectorize!
         for date_idx in self.init_oos_dates.index:
-            self.forecastOn(date_idx, train_columns, categorical_columns, target_column, algorithms)
+            try:
+                self.forecastOn(date_idx, train_columns, categorical_columns, target_column, algorithms)
+            except ValueError:
+                print('self.init_oos_dates: ')
+                print(self.init_oos_dates)
+                raise ValueError('ValueError caught while trying to forecast on customer: ' + str(self.id) + 'for date_idx ' + str(date_idx))
         for idx in algorithms.index:
             try:
                 self.errorFrame.loc[[idx], 'MAE'] = self.errorFrame['AE'][idx] / len(self.init_oos_dates)
