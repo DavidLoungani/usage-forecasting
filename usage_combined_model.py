@@ -457,6 +457,9 @@ class Customer:
         # sort by invoicetodt to make sure there is proper temporal ordering
         self.data = self.data.sort_values(by='invoicetodt')
 
+        # add tavg_intervalSum squared column -- to more easily capture nonlinear effects
+        self.data['tavg_intervalSum_sq']  = self.data['tavg_intervalSum']*self.data['tavg_intervalSum']
+
         # add avg_kwh column
         self.data['avg_kwh'] = self.data['kwh'].sum() / len(self.data)
 
