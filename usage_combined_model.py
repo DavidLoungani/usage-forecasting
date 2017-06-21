@@ -444,6 +444,32 @@ class CustomerSlice:
                 self.agg_errorFrame.loc[[idx], 'AE'] += int(abs(target_y[cust_idx] - int(current_algo.predict(target_X[cust_idx]))))
             self.agg_errorFrame.loc[[idx], 'MAE'] = self.agg_errorFrame['AE'][idx] / len(self.testFrame)
 
+    def getCoefList(self, train_columns, categorical_columns, interaction_columns, algorithms):
+        coef_list = train_columns.copy()
+        for column in categorical_columns:
+            coef_list += list(self.aggFrame[column].unique())
+        for entry in interaction_columns:
+            if (entry[2] == 'categorical'):
+                if (entry[3] == 'categorical'):
+                    for i in list(self.aggFrame[entry[0]].unique()):
+                        for j in list(self.aggFrame[entry[1]].unique()):
+                            coef_list += [(entry[0] + ' ' + str(i) + ', ' + entry[1] + ' ' + str(j))]
+                else:
+                    for i in list(self.aggFrame[entry[0]].unique()):
+                        coef_list += [(entry[0] + ' ' + str(i) + ', ' + entry[1])]
+            else:
+                print('Entry: ' + entry)
+                raise ValueError('Problem in addInteractionstoCoefList. entry[2] is not categorical.')
+        coef_vals = list(algorithms['fitted_model'][0].coef_[0])
+        if (len(coef_list) != len(coef_vals)):
+            raise ValueError('PROBLEM in createCoefList:  lengths do not match!')
+        coef_frame = pd.DataFrame(columns=['coefficients', 'values'])
+        coef_frame['coefficients'] = coef_list
+        coef_frame['values'] = coef_vals
+        return coef_frame
+
+
+
 
 class Customer:
     def __init__(self, id, data):
@@ -457,8 +483,8 @@ class Customer:
         # sort by invoicetodt to make sure there is proper temporal ordering
         self.data = self.data.sort_values(by='invoicetodt')
 
-        # add avg_kwh column
-        self.data['avg_kwh'] = self.data['kwh'].sum() / len(self.data)
+        # add tavg_intervalSum squared column -- to more easily capture nonlinear effects
+        self.data['tavg_intervalSum_sq']  = self.data['tavg_intervalSum']*self.data['tavg_intervalSum']
 
         # Shave off time intervals after February 25th, 2017
         # We do not currently have temperature data after this point
@@ -486,6 +512,24 @@ class Customer:
 
         # add to data which contains customer ID for each instance
         self.data['iethicalid'] = self.id
+        self.createEval()
+
+        # add avg_kwh column -- WITH ONLY NON_EVAL DATA!!!
+        self.data['avg_kwh'] = self.non_eval['kwh'].sum() / len(self.non_eval)
+
+        # add avg_kwh_for_current_month column -- WITH ONLY NON_EVAL DATA!!!
+        self.data['avg_kwh_for_cust_for_current_month'] = self.data['avg_kwh']  # need to initialize with something
+        for idx in self.data.index:
+            m = (self.data['month'][idx])
+            # TODO: Figure out how to log this!
+            try:
+                self.data['avg_kwh_for_cust_for_current_month'][idx] = self.non_eval[self.non_eval['month'] == m]['kwh'].sum() \
+                                                                   / len(self.non_eval[self.non_eval['month'] == m]['kwh'])
+            except ZeroDivisionError:
+                do_nothing = 0
+
+        # TODO: Find way to do this without repeating createEval()
+        # Need to reset eval to add back in avg_kwh metrics
         self.createEval()
 
     def createEval(self):
@@ -562,7 +606,12 @@ class Customer:
         self.setInitialVals(algorithms)
         # TODO: Vectorize!
         for date_idx in self.init_oos_dates.index:
-            self.forecastOn(date_idx, train_columns, categorical_columns, target_column, algorithms)
+            try:
+                self.forecastOn(date_idx, train_columns, categorical_columns, target_column, algorithms)
+            except ValueError:
+                print('self.init_oos_dates: ')
+                print(self.init_oos_dates)
+                raise ValueError('ValueError caught while trying to forecast on customer: ' + str(self.id) + 'for date_idx ' + str(date_idx))
         for idx in algorithms.index:
             try:
                 self.errorFrame.loc[[idx], 'MAE'] = self.errorFrame['AE'][idx] / len(self.init_oos_dates)
