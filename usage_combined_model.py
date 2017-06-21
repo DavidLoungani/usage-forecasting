@@ -486,9 +486,6 @@ class Customer:
         # add tavg_intervalSum squared column -- to more easily capture nonlinear effects
         self.data['tavg_intervalSum_sq']  = self.data['tavg_intervalSum']*self.data['tavg_intervalSum']
 
-        # add avg_kwh column
-        self.data['avg_kwh'] = self.data['kwh'].sum() / len(self.data)
-
         # Shave off time intervals after February 25th, 2017
         # We do not currently have temperature data after this point
         col = 'invoicetodt'
@@ -501,13 +498,6 @@ class Customer:
         except KeyError:
             print("in formatting data, could not add temporal information to customer ID: " + str(self.id))
             raise ValueError("Temporal information formatting exception")
-
-        # add avg_kwh_for_current_month column
-        self.data['avg_kwh_for_cust_for_current_month'] = self.data['avg_kwh'] # need to initialize with something
-        for idx in self.data.index:
-            m = (self.data['month'][idx])
-            self.data['avg_kwh_for_cust_for_current_month'][idx] = self.data[self.data['month'] == m]['kwh'].sum() \
-                                                                   / len(self.data[self.data['month'] == m]['kwh'])
 
         try:
             # add one-period time lag
@@ -522,6 +512,24 @@ class Customer:
 
         # add to data which contains customer ID for each instance
         self.data['iethicalid'] = self.id
+        self.createEval()
+
+        # add avg_kwh column -- WITH ONLY NON_EVAL DATA!!!
+        self.data['avg_kwh'] = self.non_eval['kwh'].sum() / len(self.non_eval)
+
+        # add avg_kwh_for_current_month column -- WITH ONLY NON_EVAL DATA!!!
+        self.data['avg_kwh_for_cust_for_current_month'] = self.data['avg_kwh']  # need to initialize with something
+        for idx in self.data.index:
+            m = (self.data['month'][idx])
+            # TODO: Figure out how to log this!
+            try:
+                self.data['avg_kwh_for_cust_for_current_month'][idx] = self.non_eval[self.non_eval['month'] == m]['kwh'].sum() \
+                                                                   / len(self.non_eval[self.non_eval['month'] == m]['kwh'])
+            except ZeroDivisionError:
+                do_nothing = 0
+
+        # TODO: Find way to do this without repeating createEval()
+        # Need to reset eval to add back in avg_kwh metrics
         self.createEval()
 
     def createEval(self):
