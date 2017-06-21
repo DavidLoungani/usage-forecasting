@@ -444,6 +444,32 @@ class CustomerSlice:
                 self.agg_errorFrame.loc[[idx], 'AE'] += int(abs(target_y[cust_idx] - int(current_algo.predict(target_X[cust_idx]))))
             self.agg_errorFrame.loc[[idx], 'MAE'] = self.agg_errorFrame['AE'][idx] / len(self.testFrame)
 
+    def getCoefList(self, train_columns, categorical_columns, interaction_columns, algorithms):
+        coef_list = train_columns.copy()
+        for column in categorical_columns:
+            coef_list += list(self.aggFrame[column].unique())
+        for entry in interaction_columns:
+            if (entry[2] == 'categorical'):
+                if (entry[3] == 'categorical'):
+                    for i in list(self.aggFrame[entry[0]].unique()):
+                        for j in list(self.aggFrame[entry[1]].unique()):
+                            coef_list += [(entry[0] + ' ' + str(i) + ', ' + entry[1] + ' ' + str(j))]
+                else:
+                    for i in list(self.aggFrame[entry[0]].unique()):
+                        coef_list += [(entry[0] + ' ' + str(i) + ', ' + entry[1])]
+            else:
+                print('Entry: ' + entry)
+                raise ValueError('Problem in addInteractionstoCoefList. entry[2] is not categorical.')
+        coef_vals = list(algorithms['fitted_model'][0].coef_[0])
+        if (len(coef_list) != len(coef_vals)):
+            raise ValueError('PROBLEM in createCoefList:  lengths do not match!')
+        coef_frame = pd.DataFrame(columns=['coefficients', 'values'])
+        coef_frame['coefficients'] = coef_list
+        coef_frame['values'] = coef_vals
+        return coef_frame
+
+
+
 
 class Customer:
     def __init__(self, id, data):
