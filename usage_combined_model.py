@@ -274,13 +274,13 @@ class CustomerSlice:
             self.grand_errorFrame.loc[[idx], 'AE'] = 0
             self.grand_errorFrame.loc[[idx], 'MAE'] = 0
 
-    def runModels(self, train_columns, categorical_columns, target_column, algorithms):
+    def runModels(self, train_columns, categorical_columns, target_column, algorithms, saveModels):
         num_customers = len(self.listSufficient)
         count = 0
         self.reset_grand_errorFrame(algorithms)
         # TODO: VECTORIZE THE FOR LOOPS ?
         for customer in self.listSufficient:
-            customer.runModels(train_columns, categorical_columns, target_column, algorithms)
+            customer.runModels(train_columns, categorical_columns, target_column, algorithms, saveModels)
             for idx in algorithms.index:
                 self.grand_errorFrame.loc[[idx], 'AE'] += \
                     int(customer.errorFrame[customer.errorFrame['regression approach']
@@ -329,21 +329,6 @@ class CustomerSlice:
     def displayAndNext(self, algorithms):
         self.listSufficient[self.iter].displayConclusions(algorithms)
         self.iterNext()
-
-    def classificationTest(self):
-        df = pd.DataFrame(columns=['customer', 'id', 'class'])
-        df['customer'] = self.listSufficient
-        for idx in df.index:
-            df['id'][idx] = df['customer'][idx].id
-            t_at_high = df['customer'][idx].getValueAtMax('kwh', 'tavg_intervalSum')
-            t_at_low = df['customer'][idx].getValueAtMin('kwh', 'tavg_intervalSum')
-            if t_at_high > t_at_low:
-                df['class'][idx] = "summer peaker"
-            elif t_at_high < t_at_low:
-                df['class'][idx] = "winter peaker"
-            else:
-                df['class'][idx] = "pattern unclear"
-        return df
 
     def createAggregateFrame(self):
         count = 1
@@ -425,6 +410,24 @@ class CustomerSlice:
             test_X = np.hstack((test_X, interaction_data))
         test_y = self.testFrame.as_matrix(columns=[target_column])
         return test_X, test_y
+
+    def run_aggregate_models_with_classify(self, train_columns, categorical_columns, interaction_columns, target_column, algorithms):
+        class_algorithms_table = pd.DataFrame(columns=['name', 'algorithm'])
+        class_algorithms_table['name'] = ['ols']
+        class_algorithms_table['algorithm'] = [linear_model.LinearRegression(fit_intercept=True)]
+        class_train_columns = ['tavg_intervalSum']
+        class_categorical_columns = []
+        for customer in self.listSufficient:
+            customer.runModels(class_train_columns, class_categorical_columns, 'kwh', class_algorithms_table, True)
+            customer.data['ols_temp_coef'] = customer.model_coef
+            customer.non_eval['ols_temp_coef'] = customer.model_coef
+            customer.eval['ols_temp_coef'] = customer.model_coef
+            customer.data['class_test'] = customer.data['ols_temp_coef']*customer.data['tavg_intervalSum']
+            customer.non_eval['class_test'] = customer.non_eval['ols_temp_coef'] * customer.non_eval['tavg_intervalSum']
+            customer.eval['class_test'] = customer.eval['ols_temp_coef'] * customer.eval['tavg_intervalSum']
+        self.run_aggregate_models(train_columns, categorical_columns, interaction_columns, target_column, algorithms)
+
+
 
     def run_aggregate_models(self, train_columns, categorical_columns, interaction_columns, target_column, algorithms):
         self.createAggregateFrame()
@@ -591,7 +594,7 @@ class Customer:
             self.data['predicted_kwh_' + str(algorithms['name'][idx])] = None
             self.errorFrame.loc[idx] = ['predicted_kwh_' + str(algorithms['name'][idx]), 0, 0, 0]
 
-    def forecastOn(self, date_idx, train_columns, categorical_columns, target_column, algorithms):
+    def forecastOn(self, date_idx, train_columns, categorical_columns, target_column, algorithms, saveModels):
         train_X, train_y = self.getTrainingSet(self.init_trainsize, date_idx, train_columns, categorical_columns, target_column)
         target_X = self.getTestSet(self.init_trainsize, date_idx, train_columns, categorical_columns)
         target_y = self.data['kwh'][self.init_trainsize + date_idx]
@@ -606,12 +609,12 @@ class Customer:
             error = int(abs(target_y - predicted_y))
             self.errorFrame.loc[[idx], 'AE'] += error
 
-    def runModels(self, train_columns, categorical_columns, target_column, algorithms):
+    def runModels(self, train_columns, categorical_columns, target_column, algorithms, saveModels):
         self.setInitialVals(algorithms)
         # TODO: Vectorize!
         for date_idx in self.init_oos_dates.index:
             try:
-                self.forecastOn(date_idx, train_columns, categorical_columns, target_column, algorithms)
+                self.forecastOn(date_idx, train_columns, categorical_columns, target_column, algorithms, saveModels)
             except ValueError:
                 print('self.init_oos_dates: ')
                 print(self.init_oos_dates)
@@ -623,6 +626,8 @@ class Customer:
                 print('self.init_oos_dates: ')
                 print(self.init_oos_dates)
                 raise ValueError("ZeroDivisionError caught while running " + algorithms['name'][idx] + 'on customer: ' + str(self.id))
+            if (saveModels):
+                self.model_coef = float((algorithms['fitted_model'][idx].coef_).copy())
         self.errorFrame = self.errorFrame.sort_values(by='AE')
         self.errorFrame = self.errorFrame.reset_index(drop=True)
 
