@@ -502,8 +502,12 @@ class Customer:
         try:
             # add one-period time lag
             self.data['prev_pd_kwh'] = list(map(lambda idx: self.data['kwh'][max(idx - 1, 0)], self.data.index))
+            self.data['prev_pd_tavg_intervalSum'] = \
+                list(map(lambda idx: self.data['tavg_intervalSum'][max(idx - 1, 0)], self.data.index))
             # add two-period time lag
             self.data['prev_prev_pd_kwh'] = list(map(lambda idx: self.data['kwh'][max(idx - 2, 0)], self.data.index))
+            self.data['prev_prev_pd_tavg_intervalSum'] = \
+                list(map(lambda idx: self.data['tavg_intervalSum'][max(idx - 2, 0)], self.data.index))
             # Shave off first two values, because of the time lag
             self.data = self.data[2:]
         except KeyError:
