@@ -336,7 +336,12 @@ class CustomerSlice:
         while (count < len(self.listSufficient)):
             aggFrame = aggFrame.append(self.listSufficient[count].non_eval)
             count = count + 1
-        self.aggFrame = aggFrame.sort_values(by='invoicetodt').reset_index().drop('index', 1)
+        try:
+            self.aggFrame = aggFrame.sort_values(by='invoicetodt').reset_index().drop('index', 1)
+        except ValueError:
+            print('Error in aggFrame resetting index, trying to fix by dropping level_0')
+            self.aggFrame.drop('level_0', axis=1, inplace=True)
+            self.aggFrame = aggFrame.sort_values(by='invoicetodt').reset_index().drop('index', 1)
 
     def createTestFrame(self, algorithms):
         count = 1
@@ -417,6 +422,7 @@ class CustomerSlice:
         class_algorithms_table['algorithm'] = [linear_model.LinearRegression(fit_intercept=True)]
         class_train_columns = ['tavg_intervalSum']
         class_categorical_columns = []
+        # class_test
         for customer in self.listSufficient:
             customer.runModels(class_train_columns, class_categorical_columns, 'kwh', class_algorithms_table, True)
             customer.data['ols_temp_coef'] = customer.model_coef
@@ -425,6 +431,20 @@ class CustomerSlice:
             customer.data['class_test'] = customer.data['ols_temp_coef']*customer.data['tavg_intervalSum']
             customer.non_eval['class_test'] = customer.non_eval['ols_temp_coef'] * customer.non_eval['tavg_intervalSum']
             customer.eval['class_test'] = customer.eval['ols_temp_coef'] * customer.eval['tavg_intervalSum']
+            #class_test_2
+            customer.data['class_test_2'] = 'pattern unclear'
+            customer.non_eval['class_test_2'] = 'pattern unclear'
+            customer.eval['class_test_2'] = 'pattern unclear'
+            def inner_classify(x):
+                if x > 0.25:
+                    return 'summer peaker'
+                elif x < -0.25:
+                    return 'winter peaker'
+                else:
+                    return 'pattern unclear'
+            customer.data['class_test_2'] = list(map(inner_classify, customer.data['ols_temp_coef']))
+            customer.non_eval['class_test_2'] = list(map(inner_classify, customer.non_eval['ols_temp_coef']))
+            customer.eval['class_test_2'] = list(map(inner_classify, customer.eval['ols_temp_coef']))
         self.run_aggregate_models(train_columns, categorical_columns, interaction_columns, target_column, algorithms)
 
 
@@ -441,7 +461,13 @@ class CustomerSlice:
         # TODO: Vectorize
         for idx in algorithms.index:
             current_algo =  algorithms['algorithm'][idx]
-            algorithms['fitted_model'][idx] = current_algo.fit(train_X, train_y)
+            try:
+                algorithms['fitted_model'][idx] = current_algo.fit(train_X, train_y)
+            except ValueError:
+                global error_train_X, error_train_y
+                error_train_X = train_X
+                error_train_y = train_y
+                raise ValueError('ValueError caught while fitting model in run_aggregate_model, returning train sets')
             for cust_idx in self.testFrame.index:
                 self.testFrame['predicted_kwh_' + str(algorithms['name'][idx])][cust_idx] = int(current_algo.predict(target_X[cust_idx]))
                 self.agg_errorFrame.loc[[idx], 'AE'] += int(abs(target_y[cust_idx] - int(current_algo.predict(target_X[cust_idx]))))
@@ -522,7 +548,16 @@ class Customer:
         self.createEval()
 
         # add avg_kwh column -- WITH ONLY NON_EVAL DATA!!!
-        self.data['avg_kwh'] = self.non_eval['kwh'].sum() / len(self.non_eval)
+        try:
+            self.data['avg_kwh'] = self.non_eval['kwh'].sum() / len(self.non_eval)
+        except ZeroDivisionError:
+            print('Customer ID: ' +  str(self.id))
+            print('return customer data, eval, and non_eval')
+            global error_data, error_eval, error_non_eval
+            error_data = self.data
+            error_eval = self.eval
+            error_non_eval = self.non_eval
+            raise ValueError('Zero Division Error caught while trying to add avg_kwh')
 
         # add avg_kwh_for_current_month column -- WITH ONLY NON_EVAL DATA!!!
         self.data['avg_kwh_for_cust_for_current_month'] = self.data['avg_kwh']  # need to initialize with something
